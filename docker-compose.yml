@@ -1,0 +1,50 @@
+# ── KWBot – docker-compose.yml ────────────────────────────────────────────
+# Avvio:  docker compose up -d
+# Stop:   docker compose down
+# Log:    docker compose logs -f
+# Status: docker compose exec kwbot python main.py --status
+
+services:
+  kwbot:
+    build:
+      context: .
+      dockerfile: Dockerfile
+
+    # Nome fisso del container (utile per i log e i comandi manuali)
+    container_name: kwbot
+
+    # ── Riavvio automatico ──────────────────────────────────────────────
+    # unless-stopped: si riavvia sempre (anche dopo reboot PC)
+    # tranne se fermato manualmente con "docker compose down"
+    restart: unless-stopped
+
+    # ── Volume: dati persistenti ────────────────────────────────────────
+    # La cartella ./kwbot_data sull'host (accanto a docker-compose.yml)
+    # viene montata su /data nel container.
+    # Contiene: config.ini, kwb_data.db, kwb_logger.log
+    volumes:
+      - C:\Progetti\Dati\KWBot_data:/data
+
+    # ── Rete: accesso alla caldaia ──────────────────────────────────────
+    # La caldaia è su 192.168.50.100 nella rete locale.
+    # Con network_mode: host il container usa direttamente la rete del PC.
+    # Su Linux funziona nativamente.
+    # Su Windows/Docker Desktop funziona grazie al bridge automatico.
+    network_mode: host
+
+    # ── Logging Docker ──────────────────────────────────────────────────
+    # Limita i log Docker (non i log del progetto, che vanno su /data)
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+    # ── Healthcheck override (opzionale, già nel Dockerfile) ────────────
+    # Lasciato qui per visibilità
+    healthcheck:
+      test: ["CMD", "python", "main.py", "--status"]
+      interval: 60s
+      timeout: 10s
+      start_period: 30s
+      retries: 3

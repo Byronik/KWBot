@@ -1,0 +1,33 @@
+# Configurazione (contiene token e credenziali)
+config.ini
+
+# Database e log
+*.db
+*.log
+data/
+kwbot_data/
+
+# Note di sviluppo interne
+sviluppi.md
+Istruzio-claude.md
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+.mypy_cache/
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+
+# Docker
+.dockerignore
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo

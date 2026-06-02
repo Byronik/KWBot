@@ -1,0 +1,48 @@
+# ── KWBot – config.ini.example ────────────────────────────────────────────
+# Copia questo file come config.ini e compila i valori reali.
+# Su Docker: metti config.ini nella cartella kwbot_data/ (montata su /data)
+# In locale: metti config.ini nella root del progetto
+
+[network]
+# IP e porta Modbus TCP della caldaia
+boiler_ip   = 192.168.x.x
+boiler_port = 502
+slave_id    = 1
+timeout     = 5
+
+[equipment]
+# Numero di circuiti di riscaldamento (HK), buffer e boiler ACS
+num_heating_circuits = 2
+num_buffers          = 1
+num_hot_water        = 1
+has_solar            = true
+
+[polling]
+# Intervallo tra un poll e il successivo (secondi)
+interval_seconds = 300
+# Quante ore di storico mostrare nei grafici
+chart_hours      = 24
+
+[database]
+# Path del database SQLite.
+# Su Docker usa il path assoluto nel volume: /data/kwb_data.db
+# In locale usa un path relativo: data/kwb_data.db
+path = /data/kwb_data.db
+
+[telegram]
+# Token del bot (da @BotFather)
+bot_token   = 123456789:AAXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX
+# ID Telegram degli utenti autorizzati (separati da virgola)
+allowed_ids = 111111111, 222222222
+
+[display]
+# Timezone per la visualizzazione dei timestamp nel bot
+display_timezone = Europe/Rome
+
+[logging]
+# Livello di log: DEBUG, INFO, WARNING, ERROR
+level = INFO
+
+[monitoring]
+# URL ping healthchecks.io (lascia vuoto per disabilitare)
+healthcheck_url = https://hc-ping.com/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
