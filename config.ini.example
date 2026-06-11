@@ -46,3 +46,8 @@ level = INFO
 [monitoring]
 # URL ping healthchecks.io (lascia vuoto per disabilitare)
 healthcheck_url = https://hc-ping.com/xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
+
+# Soglie temperatura caldaia (boiler_temp_actual) per notifiche Telegram
+# 0 = disabilitato
+boiler_alert        = 75
+boiler_intervention = 80

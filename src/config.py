@@ -61,4 +61,6 @@ DISPLAY_TIMEZONE : str = _cfg.get("display", "display_timezone", fallback="Europ
 LOG_LEVEL : str = _cfg.get("logging", "level", fallback="INFO").upper()
 
 # [monitoring]
-HEALTHCHECK_URL : str = _cfg.get("monitoring", "healthcheck_url", fallback="").strip()
+HEALTHCHECK_URL      : str   = _cfg.get  ("monitoring", "healthcheck_url",      fallback="").strip()
+BOILER_ALERT_TEMP    : float = _cfg.getfloat("monitoring", "boiler_alert",       fallback=0.0)
+BOILER_INTERVENTION_TEMP : float = _cfg.getfloat("monitoring", "boiler_intervention", fallback=0.0)

@@ -45,6 +45,10 @@ logger = logging.getLogger("kwb_logger")
 # Event loop del bot — impostato dal thread principale prima di avviare il polling
 _bot_loop: asyncio.AbstractEventLoop | None = None
 
+# Stato alert temperatura boiler (evita notifiche ripetute finché la soglia resta superata)
+_alert_sent        : bool = False
+_intervention_sent : bool = False
+
 
 # ── Healthcheck ping ──────────────────────────────────────────────────────
 def ping_healthcheck() -> None:
@@ -98,6 +102,52 @@ def _notify(messages: list[str]) -> None:
             asyncio.run(_notify_async(messages))
         except Exception as e:
             logger.error(f"Notification (standalone) failed: {e}")
+
+
+# ── Boiler temperature alerts ─────────────────────────────────────────────
+def check_boiler_temp(temp: float) -> None:
+    global _alert_sent, _intervention_sent
+
+    t_alert = config.BOILER_ALERT_TEMP
+    t_inter = config.BOILER_INTERVENTION_TEMP
+
+    if t_inter > 0 and temp >= t_inter:
+        # Soglia intervento superata — solo messaggio intervento
+        _alert_sent = True  # sopprime l'alert minore
+        if not _intervention_sent:
+            msg = (
+                f"🚨 *ALLARME – Temperatura caldaia critica*\n\n"
+                f"La temperatura della caldaia ha superato la soglia di intervento.\n\n"
+                f"🌡 Temperatura attuale: *{temp:.1f} °C*\n"
+                f"🚨 Soglia di intervento: *{t_inter:.0f} °C*\n\n"
+                f"⚠️ Intervenire subito!"
+            )
+            _notify([msg])
+            _intervention_sent = True
+            logger.warning(f"Boiler intervention alert inviato: {temp:.1f} °C >= {t_inter:.0f} °C")
+
+    elif t_alert > 0 and temp >= t_alert:
+        # Solo soglia allerta superata
+        if _intervention_sent:
+            # Transizione da intervento ad allerta: resetta entrambi i flag
+            _intervention_sent = False
+            _alert_sent = False
+        if not _alert_sent:
+            msg = (
+                f"⚠️ *ATTENZIONE – Temperatura caldaia elevata*\n\n"
+                f"La temperatura attuale della caldaia ha raggiunto la soglia di allerta.\n\n"
+                f"🌡 Temperatura attuale: *{temp:.1f} °C*\n"
+                f"⚠️ Soglia di allerta: *{t_alert:.0f} °C*\n\n"
+                f"Monitorare la situazione."
+            )
+            _notify([msg])
+            _alert_sent = True
+            logger.warning(f"Boiler alert inviato: {temp:.1f} °C >= {t_alert:.0f} °C")
+
+    else:
+        # Sotto entrambe le soglie — reset stato
+        _alert_sent = False
+        _intervention_sent = False
 
 
 # ── Alarm check ───────────────────────────────────────────────────────────
@@ -181,6 +231,12 @@ def poll_once(db, registers) -> None:
         client.close()
 
     insert_readings_wide(db, ts, results)
+
+    # Alert temperatura boiler
+    temp_result = next((r for r in results
+                        if r.register.name == "boiler_temp_actual" and r.error is None), None)
+    if temp_result is not None:
+        check_boiler_temp(temp_result.scaled_value)
 
     err = 0
     for res in results:
