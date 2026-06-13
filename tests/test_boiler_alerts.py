@@ -1,18 +1,25 @@
 """
 test_boiler_alerts.py
 =====================
-Verifica la logica di check_boiler_temp() in logger.py:
-- Nessuna notifica sotto soglia
-- Alert inviato al primo superamento di boiler_alert
-- Alert NON ripetuto se la temperatura resta sopra soglia
-- Reset e nuova notifica dopo discesa e risalita
-- Soglia intervento: solo messaggio intervento (non alert)
-- Reset stato quando si scende sotto boiler_alert
+Verifica la macchina a stati di check_boiler_temp() in logger.py.
+
+Stati:
+  0 = normale   (T < boiler_alert)
+  1 = allerta   (boiler_alert <= T < boiler_intervention)
+  2 = intervento (T >= boiler_intervention)
+
+Transizioni attese:
+  0→1 : messaggio allerta
+  1→2 : messaggio intervento
+  0→2 : messaggio intervento (salto diretto)
+  2→1 : messaggio intervento rientrato
+  1→0 : messaggio situazione normalizzata
+  2→0 : messaggio situazione normalizzata (salto diretto)
+  stesso stato: nessun messaggio
 """
 
 import sys
 import types
-import logging
 from pathlib import Path
 from unittest.mock import patch
 
@@ -41,100 +48,92 @@ import logger  # noqa: E402
 
 @pytest.fixture(autouse=True)
 def reset_state():
-    """Imposta soglie e resetta lo stato globale degli alert prima di ogni test."""
     import config
     config.BOILER_ALERT_TEMP = 75.0
     config.BOILER_INTERVENTION_TEMP = 80.0
-    logger._alert_sent = False
-    logger._intervention_sent = False
+    logger._boiler_acs_state = 0
     yield
-    logger._alert_sent = False
-    logger._intervention_sent = False
+    logger._boiler_acs_state = 0
 
 
-class TestBoilerAlerts:
+class TestBoilerAcsAlerts:
 
     def test_no_notification_below_alert(self):
-        """Sotto boiler_alert: nessuna notifica."""
+        """Stato 0: nessuna notifica sotto boiler_alert."""
         with patch.object(logger, "_notify") as mock_notify:
             logger.check_boiler_temp(70.0)
             mock_notify.assert_not_called()
 
-    def test_alert_sent_at_threshold(self):
-        """Al raggiungimento esatto di boiler_alert: notifica allerta."""
-        with patch.object(logger, "_notify") as mock_notify:
-            logger.check_boiler_temp(75.0)
-            mock_notify.assert_called_once()
-            msg = mock_notify.call_args[0][0][0]
-            assert "ATTENZIONE" in msg
-            assert "75.0" in msg
-
-    def test_alert_sent_above_threshold(self):
-        """Sopra boiler_alert ma sotto boiler_intervention: notifica allerta."""
+    def test_0_to_1_sends_alert(self):
+        """Transizione 0→1: messaggio allerta, parla di boiler ACS."""
         with patch.object(logger, "_notify") as mock_notify:
             logger.check_boiler_temp(77.0)
             mock_notify.assert_called_once()
             msg = mock_notify.call_args[0][0][0]
             assert "ATTENZIONE" in msg
+            assert "ACS" in msg
+            assert "77.0" in msg
 
-    def test_alert_not_repeated(self):
-        """Alert non ripetuto se la temperatura resta sopra soglia."""
+    def test_1_to_2_sends_intervention(self):
+        """Transizione 1→2: messaggio intervento, parla di boiler ACS."""
         with patch.object(logger, "_notify") as mock_notify:
-            logger.check_boiler_temp(76.0)
-            logger.check_boiler_temp(77.0)
-            logger.check_boiler_temp(78.0)
-            assert mock_notify.call_count == 1
-
-    def test_alert_reset_after_drop(self):
-        """Dopo discesa sotto soglia, il successivo superamento manda nuovo alert."""
-        with patch.object(logger, "_notify") as mock_notify:
-            logger.check_boiler_temp(76.0)
-            logger.check_boiler_temp(70.0)
-            logger.check_boiler_temp(76.0)
+            logger.check_boiler_temp(77.0)  # 0→1
+            logger.check_boiler_temp(82.0)  # 1→2
             assert mock_notify.call_count == 2
-
-    def test_intervention_sent_at_threshold(self):
-        """Al raggiungimento di boiler_intervention: solo messaggio intervento."""
-        with patch.object(logger, "_notify") as mock_notify:
-            logger.check_boiler_temp(80.0)
-            mock_notify.assert_called_once()
             msg = mock_notify.call_args[0][0][0]
             assert "ALLARME" in msg
-            assert "ATTENZIONE" not in msg
+            assert "ACS" in msg
+            assert "82.0" in msg
 
-    def test_intervention_not_repeated(self):
-        """Messaggio intervento non ripetuto se temperatura resta sopra soglia."""
+    def test_0_to_2_direct_sends_intervention(self):
+        """Salto diretto 0→2: solo messaggio intervento."""
         with patch.object(logger, "_notify") as mock_notify:
-            logger.check_boiler_temp(82.0)
             logger.check_boiler_temp(85.0)
-            assert mock_notify.call_count == 1
-
-    def test_intervention_no_alert_message(self):
-        """Superando boiler_intervention direttamente: solo intervento, non alert."""
-        with patch.object(logger, "_notify") as mock_notify:
-            logger.check_boiler_temp(82.0)
-            assert mock_notify.call_count == 1
+            mock_notify.assert_called_once()
             msg = mock_notify.call_args[0][0][0]
             assert "ALLARME" in msg
 
-    def test_drop_from_intervention_to_alert_range(self):
-        """
-        Scendendo da sopra boiler_intervention a range alert (tra 75 e 80):
-        deve mandare il messaggio di allerta (non intervento).
-        """
+    def test_2_to_1_sends_intervention_cleared(self):
+        """Transizione 2→1: messaggio intervento rientrato."""
         with patch.object(logger, "_notify") as mock_notify:
-            logger.check_boiler_temp(82.0)
-            logger.check_boiler_temp(77.0)
+            logger.check_boiler_temp(82.0)  # 0→2
+            logger.check_boiler_temp(77.0)  # 2→1
             assert mock_notify.call_count == 2
-            msg0 = mock_notify.call_args_list[0][0][0][0]
-            msg1 = mock_notify.call_args_list[1][0][0][0]
-            assert "ALLARME" in msg0
-            assert "ATTENZIONE" in msg1
+            msg = mock_notify.call_args[0][0][0]
+            assert "rientrato" in msg.lower()
+            assert "ACS" in msg
 
-    def test_full_reset_below_alert(self):
-        """Scendendo sotto boiler_alert: stato completamente resettato."""
+    def test_1_to_0_sends_normalized(self):
+        """Transizione 1→0: messaggio situazione normalizzata."""
         with patch.object(logger, "_notify") as mock_notify:
-            logger.check_boiler_temp(82.0)
-            logger.check_boiler_temp(70.0)
-            assert logger._alert_sent is False
-            assert logger._intervention_sent is False
+            logger.check_boiler_temp(77.0)  # 0→1
+            logger.check_boiler_temp(70.0)  # 1→0
+            assert mock_notify.call_count == 2
+            msg = mock_notify.call_args[0][0][0]
+            assert "normalizzata" in msg.lower() or "OK" in msg
+
+    def test_2_to_0_direct_sends_normalized(self):
+        """Salto diretto 2→0: messaggio situazione normalizzata."""
+        with patch.object(logger, "_notify") as mock_notify:
+            logger.check_boiler_temp(82.0)  # 0→2
+            logger.check_boiler_temp(70.0)  # 2→0
+            assert mock_notify.call_count == 2
+            msg = mock_notify.call_args[0][0][0]
+            assert "normalizzata" in msg.lower() or "OK" in msg
+
+    def test_no_repeat_in_same_state(self):
+        """Nessuna notifica ripetuta finché lo stato non cambia."""
+        with patch.object(logger, "_notify") as mock_notify:
+            logger.check_boiler_temp(77.0)  # 0→1
+            logger.check_boiler_temp(76.0)  # rimane in 1
+            logger.check_boiler_temp(78.0)  # rimane in 1
+            assert mock_notify.call_count == 1
+
+    def test_full_cycle(self):
+        """Ciclo completo 0→1→2→1→0: 4 notifiche totali."""
+        with patch.object(logger, "_notify") as mock_notify:
+            logger.check_boiler_temp(77.0)  # 0→1
+            logger.check_boiler_temp(82.0)  # 1→2
+            logger.check_boiler_temp(77.0)  # 2→1
+            logger.check_boiler_temp(70.0)  # 1→0
+            assert mock_notify.call_count == 4

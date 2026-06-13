@@ -45,9 +45,11 @@ logger = logging.getLogger("kwb_logger")
 # Event loop del bot — impostato dal thread principale prima di avviare il polling
 _bot_loop: asyncio.AbstractEventLoop | None = None
 
-# Stato alert temperatura boiler (evita notifiche ripetute finché la soglia resta superata)
-_alert_sent        : bool = False
-_intervention_sent : bool = False
+# Stato temperatura boiler ACS — macchina a 3 stati:
+#   0 = normale (T < boiler_alert)
+#   1 = allerta  (boiler_alert <= T < boiler_intervention)
+#   2 = intervento (T >= boiler_intervention)
+_boiler_acs_state: int = 0
 
 
 # ── Healthcheck ping ──────────────────────────────────────────────────────
@@ -104,50 +106,77 @@ def _notify(messages: list[str]) -> None:
             logger.error(f"Notification (standalone) failed: {e}")
 
 
-# ── Boiler temperature alerts ─────────────────────────────────────────────
+# ── Boiler ACS temperature alerts ────────────────────────────────────────
 def check_boiler_temp(temp: float) -> None:
-    global _alert_sent, _intervention_sent
+    """
+    Macchina a 3 stati per la temperatura del boiler ACS (boi1_temp_actual).
+    Invia notifica solo alle transizioni di stato.
+    """
+    global _boiler_acs_state
 
     t_alert = config.BOILER_ALERT_TEMP
     t_inter = config.BOILER_INTERVENTION_TEMP
 
+    # Calcola nuovo stato
     if t_inter > 0 and temp >= t_inter:
-        # Soglia intervento superata — solo messaggio intervento
-        _alert_sent = True  # sopprime l'alert minore
-        if not _intervention_sent:
-            msg = (
-                f"🚨 *ALLARME – Temperatura caldaia critica*\n\n"
-                f"La temperatura della caldaia ha superato la soglia di intervento.\n\n"
-                f"🌡 Temperatura attuale: *{temp:.1f} °C*\n"
-                f"🚨 Soglia di intervento: *{t_inter:.0f} °C*\n\n"
-                f"⚠️ Intervenire subito!"
-            )
-            _notify([msg])
-            _intervention_sent = True
-            logger.warning(f"Boiler intervention alert inviato: {temp:.1f} °C >= {t_inter:.0f} °C")
-
+        new_state = 2
     elif t_alert > 0 and temp >= t_alert:
-        # Solo soglia allerta superata
-        if _intervention_sent:
-            # Transizione da intervento ad allerta: resetta entrambi i flag
-            _intervention_sent = False
-            _alert_sent = False
-        if not _alert_sent:
-            msg = (
-                f"⚠️ *ATTENZIONE – Temperatura caldaia elevata*\n\n"
-                f"La temperatura attuale della caldaia ha raggiunto la soglia di allerta.\n\n"
-                f"🌡 Temperatura attuale: *{temp:.1f} °C*\n"
-                f"⚠️ Soglia di allerta: *{t_alert:.0f} °C*\n\n"
-                f"Monitorare la situazione."
-            )
-            _notify([msg])
-            _alert_sent = True
-            logger.warning(f"Boiler alert inviato: {temp:.1f} °C >= {t_alert:.0f} °C")
-
+        new_state = 1
     else:
-        # Sotto entrambe le soglie — reset stato
-        _alert_sent = False
-        _intervention_sent = False
+        new_state = 0
+
+    if new_state == _boiler_acs_state:
+        return  # Nessuna transizione, nessuna notifica
+
+    prev_state = _boiler_acs_state
+    _boiler_acs_state = new_state
+
+    msg = None
+
+    if new_state == 1 and prev_state == 0:
+        # Normale → Allerta
+        msg = (
+            f"⚠️ *ATTENZIONE – Temperatura boiler ACS elevata*\n\n"
+            f"La temperatura del boiler ACS ha raggiunto la soglia di allerta.\n\n"
+            f"🌡 Temperatura attuale: *{temp:.1f} °C*\n"
+            f"⚠️ Soglia di allerta: *{t_alert:.0f} °C*\n\n"
+            f"Monitorare la situazione."
+        )
+
+    elif new_state == 2:
+        # Qualsiasi → Intervento
+        msg = (
+            f"🚨 *ALLARME – Temperatura boiler ACS critica*\n\n"
+            f"La temperatura del boiler ACS ha superato la soglia di intervento.\n\n"
+            f"🌡 Temperatura attuale: *{temp:.1f} °C*\n"
+            f"🚨 Soglia di intervento: *{t_inter:.0f} °C*\n\n"
+            f"⚠️ Intervenire subito!"
+        )
+
+    elif new_state == 1 and prev_state == 2:
+        # Intervento → Allerta
+        msg = (
+            f"✅ *Intervento rientrato – Boiler ACS*\n\n"
+            f"La temperatura del boiler ACS è scesa sotto la soglia di intervento.\n\n"
+            f"🌡 Temperatura attuale: *{temp:.1f} °C*\n"
+            f"⚠️ Soglia di allerta ancora superata: *{t_alert:.0f} °C*\n\n"
+            f"Tenere comunque sotto controllo la situazione."
+        )
+
+    elif new_state == 0:
+        # Qualsiasi → Normale
+        msg = (
+            f"✅ *Situazione normalizzata – Boiler ACS*\n\n"
+            f"La temperatura del boiler ACS è tornata sotto la soglia di allerta.\n\n"
+            f"🌡 Temperatura attuale: *{temp:.1f} °C*\n"
+            f"✅ Situazione OK."
+        )
+
+    if msg:
+        _notify([msg])
+        logger.warning(
+            f"Boiler ACS alert: stato {prev_state}→{new_state}, T={temp:.1f} °C"
+        )
 
 
 # ── Alarm check ───────────────────────────────────────────────────────────
@@ -234,7 +263,7 @@ def poll_once(db, registers) -> None:
 
     # Alert temperatura boiler
     temp_result = next((r for r in results
-                        if r.register.name == "boiler_temp_actual" and r.error is None), None)
+                        if r.register.name == "boi1_temp_actual" and r.error is None), None)
     if temp_result is not None:
         check_boiler_temp(temp_result.scaled_value)
 
